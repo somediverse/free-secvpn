@@ -1,4 +1,6 @@
 - name: Install deps
+- name: Run parser
+  run: cd parser && node index.js
   run: |
     cd parser
     rm -rf node_modules package-lock.json  # ← очистка
