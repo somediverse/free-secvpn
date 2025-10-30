@@ -1,2 +1,2 @@
 - name: Install deps
-  run: cd parser && npm install   # ← БЕЗ ci, БЕЗ lock-файла
+  run: cd parser && npm install   # ← 
