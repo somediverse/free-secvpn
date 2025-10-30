@@ -1,7 +1,34 @@
-- name: Install deps
-- name: Run parser
-  run: cd parser && node index.js
-  run: |
-    cd parser
-    rm -rf node_modules package-lock.json  # ← очистка
-    npm install
+name: VPN Auto‑Parser
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: |
+          cd parser
+          rm -rf node_modules package-lock.json
+          npm install   # ← ТОЛЬКО install
+
+      - name: Run parser
+        run: cd parser && node index.js
+
+      - name: Commit result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vpn_filtered.txt
+          git commit -m "Auto-update $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes"
+          git push
