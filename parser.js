@@ -101,12 +101,11 @@ function parseHostPortFromNormalized(normalized) {
   } catch { return null; }
 }
 function extractCommentSuffix(raw) {
-  if (!raw) {
-    console.log('Warning: extractCommentSuffix called with undefined/null input');
-    return '';
-  }
+  if (!raw) return '';
+  
   const i1 = raw.indexOf(' # ');
   if (i1 >= 0) return raw.slice(i1);
+  
   const i2 = raw.lastIndexOf('#');
   return i2 >= 0 && i2 > raw.length - 60 ? raw.slice(i2) : '';
 }
@@ -116,7 +115,7 @@ function normalizeLine(protocol, payload, suffix) {
   const decoded = decodeBase64IfNeeded(payload) || payload || '';
   let result = `${protocol}://${decoded}${suffix || ''}`.trim();
   const trimmedDecoded = decoded.trim();
-  if (trimmedDecoded.match(/^\{[\s\S]*\}$/)) {
+  if (trimmedDecoded && trimmedDecoded.match(/^\{[\s\S]*\}$/)) {
     const jsonObj = safeJsonParse(trimmedDecoded);
     if (jsonObj) result = flattenJsonToUrl(protocol, jsonObj, suffix);
   }
@@ -163,39 +162,66 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
     log.push(`Fetching ${src}`);
     let text;
     try { text = await (await fetch(src)).text(); } catch (e) { log.push(`Fetch error: ${e.message}`); continue; }
-    const lines = text.split(/\r?\n/);
+    const lines = text ? text.split(/\r?\n/) : [];
     let i = 0, tasks = [];
     while (i < lines.length) {
       let line = lines[i++];
       if (!line) continue;
       line = line.trim();
+      if (!line) continue;
       const m = line.match(PROTOCOL_RE);
       if (!m) continue;
-      const protocol = m[1].toLowerCase();
+      const protocol = m[1] ? m[1].toLowerCase() : '';
       let rest = m[2];
+      
+      // Проверка на undefined для protocol
+      if (!protocol) continue;
+      
       // Многострочный JSON
       if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
         let depth = 0, block = rest;
         for (const c of block) if (c === '{') depth++; else if (c === '}') depth--;
         while (depth > 0 && i < lines.length) {
           const next = lines[i++];
+          if (!next) continue;
           block += '\n' + next;
           for (const c of next) if (c === '{') depth++; else if (c === '}') depth--;
         }
         rest = block;
       }
+      
+      // Проверка на undefined для rest
+      if (!rest) {
+        log.push(`Skipping line due to undefined rest: ${line}`);
+        continue;
+      }
+      
       const suffix = extractCommentSuffix(rest);
       const payload = suffix ? rest.slice(0, rest.indexOf(suffix)).trim() : rest.trim();
       const decodedPayload = decodeURIComponent(payload);
+      
+      // Проверка на undefined для decodedPayload
+      if (decodedPayload === undefined) {
+        log.push(`Skipping line due to undefined decodedPayload: ${line}`);
+        continue;
+      }
+      
       // НОРМАЛИЗАЦИЯ
       const normalized = normalizeLine(protocol, decodedPayload, suffix);
-      if (!normalized) continue;
+      
+      // Проверка на undefined для normalized
+      if (!normalized) {
+        log.push(`Skipping line due to undefined normalized: ${line}`);
+        continue;
+      }
+      
       // JSON
       let jsonObj = null;
       const jsonStart = normalized.indexOf('{');
       if (jsonStart > 0) {
         try { jsonObj = JSON.parse(normalized.slice(jsonStart)); } catch {}
       }
+      
       // ФИЛЬТРЫ
       if (checkInsecureFlags(normalized, jsonObj)) { log.push(`Excluded (insecure) -> ${normalized}`); continue; }
       if (securityForbidden(normalized, jsonObj)) { log.push(`Excluded (none/auto) -> ${normalized}`); continue; }
