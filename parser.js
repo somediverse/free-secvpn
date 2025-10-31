@@ -7,32 +7,28 @@
  *
  * NOTE: UDP/QUIC detection is best-effort — QUIC may not respond to an empty UDP packet. This step
  * improves detection for many UDP-capable VPN servers but cannot guarantee 100% for all QUIC servers.
- * upd. Parser module with concurrency, TCP reachability, TLS handshake and UDP 
+ * upd. Parser module with concurrency, TCP reachability, TLS handshake and UDP
  * updated:
  * - Гарантировано нет undefined.includes
  * - checkInsecureFlags безопасна
  * - normalizeLine всегда возвращает строку
  * - lower определён до фильтров
  */
-
 const fetch = require('node-fetch');
 const net = require('net');
 const tls = require('tls');
 const dgram = require('dgram');
 const pLimit = require('p-limit');
-
 const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/.*$/s;
-
 function safeJsonParse(s) {
+  if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
 }
-
 function isBase64(str) {
   if (!str || typeof str !== 'string') return false;
   const cleaned = str.split('?')[0].split('#')[0].replace(/[\r\n\s]/g, '');
   return /^[A-Za-z0-9+/=]+$/.test(cleaned) && cleaned.length % 4 === 0;
 }
-
 function decodeBase64IfNeeded(s) {
   if (!s) return s;
   if (isBase64(s)) {
@@ -43,8 +39,8 @@ function decodeBase64IfNeeded(s) {
   }
   return s;
 }
-
 function flattenJsonToUrl(protocol, obj, suffix) {
+  if (!obj) return `${protocol}://${suffix || ''}`.trim();
   const host = obj.add || obj.address || obj.host || obj.ip || obj.server || '';
   const port = obj.port || obj.p || obj.sport || '';
   const userinfo = obj.id || obj.uuid || obj.user || obj.password || obj.auth || '';
@@ -59,17 +55,14 @@ function flattenJsonToUrl(protocol, obj, suffix) {
   const comment = suffix ? ` ${suffix}` : '';
   return `${protocol}://${authority}${query}${comment}`.trim();
 }
-
 function checkInsecureFlags(inputLine, jsonObj) {
   const lineLower = typeof inputLine === 'string' ? inputLine.toLowerCase() : '';
   if (!lineLower) return false;
-
   const patterns = [
     'insecure=1', 'insecure: 1', 'allowinsecure=1',
     'skip-cert-verify=true', 'skip-cert-verify: true', 'insecure: true', 'insecure:true'
   ];
   if (patterns.some(p => lineLower.includes(p))) return true;
-
   if (jsonObj) {
     return ['insecure', 'allowInsecure', 'skip-cert-verify'].some(key => {
       const val = jsonObj[key];
@@ -78,45 +71,35 @@ function checkInsecureFlags(inputLine, jsonObj) {
   }
   return false;
 }
-
 function securityForbidden(inputLine, jsonObj) {
   const lineLower = typeof inputLine === 'string' ? inputLine.toLowerCase() : '';
   if (!lineLower) return false;
-
   const m = lineLower.match(/(security|scy|sc)\s*[=:]?\s*([^\s;,&}]+)/i);
   if (m && m[2] && ['none', 'auto'].includes(m[2].toLowerCase())) return true;
-
   return jsonObj?.security && ['none', 'auto'].includes(String(jsonObj.security).toLowerCase());
 }
-
 function hasRequiredParam(inputLine, jsonObj) {
   const lineLower = typeof inputLine === 'string' ? inputLine.toLowerCase() : '';
   if (!lineLower) return false;
-
   const ok = v => v && (/tls|reality/.test(v) || /-(gcm|poly1305)$/.test(v));
   const m = lineLower.match(/(security|method|cipher|scy|sc|crypt)\s*[=:\"]?\s*([^\s;,&}]+)/i);
   if (m && m[2] && ok(m[2])) return true;
-
   return ['security', 'scy', 'method', 'cipher'].some(k => jsonObj?.[k] && ok(String(jsonObj[k]).toLowerCase()));
 }
-
 function portIs443(inputLine, jsonObj) {
   const lineLower = typeof inputLine === 'string' ? inputLine.toLowerCase() : '';
   if (!lineLower) return false;
-
   const m = lineLower.match(/port\s*[=:]?\s*(\d+)/i);
   if (m && m[1] === '443') return true;
-
   return jsonObj?.port === 443 || jsonObj?.port === '443';
 }
-
 function parseHostPortFromNormalized(normalized) {
+  if (!normalized) return null;
   try {
     const u = new URL(normalized.replace(/^[a-z]+:\/\//i, 'http://'));
     return { host: u.hostname, port: u.port || '443' };
   } catch { return null; }
 }
-
 function extractCommentSuffix(raw) {
   if (!raw) {
     console.log('Warning: extractCommentSuffix called with undefined/null input');
@@ -127,21 +110,18 @@ function extractCommentSuffix(raw) {
   const i2 = raw.lastIndexOf('#');
   return i2 >= 0 && i2 > raw.length - 60 ? raw.slice(i2) : '';
 }
-
 // === НОРМАЛИЗАЦИЯ (всегда строка) ===
 function normalizeLine(protocol, payload, suffix) {
+  if (!protocol) return '';
   const decoded = decodeBase64IfNeeded(payload) || payload || '';
   let result = `${protocol}://${decoded}${suffix || ''}`.trim();
-
   const trimmedDecoded = decoded.trim();
   if (trimmedDecoded.match(/^\{[\s\S]*\}$/)) {
     const jsonObj = safeJsonParse(trimmedDecoded);
     if (jsonObj) result = flattenJsonToUrl(protocol, jsonObj, suffix);
   }
-
   return result || '';
 }
-
 // === ПРОБНИКИ ===
 async function tcpReachable(host, port) {
   return new Promise(r => {
@@ -150,7 +130,6 @@ async function tcpReachable(host, port) {
     s.on('error', () => r(false));
   });
 }
-
 async function tlsHandshake(host, port) {
   return new Promise(r => {
     const s = tls.connect({ host, port, rejectUnauthorized: false }, () => { s.end(); r(true); });
@@ -158,7 +137,6 @@ async function tlsHandshake(host, port) {
     s.on('error', () => r(false));
   });
 }
-
 async function udpProbe(host, port) {
   return new Promise(r => {
     const s = dgram.createSocket('udp4');
@@ -170,7 +148,6 @@ async function udpProbe(host, port) {
     setTimeout(() => done(false), 1200);
   });
 }
-
 async function probeEndpoint(host, port, log) {
   if (!await tcpReachable(host, port)) { log.push(`TCP closed ${host}:${port}`); return false; }
   log.push(`TCP open ${host}:${port}`);
@@ -178,28 +155,24 @@ async function probeEndpoint(host, port, log) {
   if (await udpProbe(host, port)) { log.push(`UDP OK ${host}:${port}`); return true; }
   return false;
 }
-
 // === ОСНОВНАЯ ЛОГИКА ===
 async function parseSources(sources, { concurrency = 50 } = {}) {
   const results = [], seen = new Set(), log = [], limit = pLimit(concurrency);
-
   for (const src of sources) {
+    if (!src) continue;
     log.push(`Fetching ${src}`);
     let text;
     try { text = await (await fetch(src)).text(); } catch (e) { log.push(`Fetch error: ${e.message}`); continue; }
-
     const lines = text.split(/\r?\n/);
     let i = 0, tasks = [];
-
     while (i < lines.length) {
-      let line = lines[i++].trim();
+      let line = lines[i++];
       if (!line) continue;
+      line = line.trim();
       const m = line.match(PROTOCOL_RE);
       if (!m) continue;
-
       const protocol = m[1].toLowerCase();
       let rest = m[2];
-
       // Многострочный JSON
       if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
         let depth = 0, block = rest;
@@ -211,31 +184,25 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
         }
         rest = block;
       }
-
       const suffix = extractCommentSuffix(rest);
       const payload = suffix ? rest.slice(0, rest.indexOf(suffix)).trim() : rest.trim();
       const decodedPayload = decodeURIComponent(payload);
-
       // НОРМАЛИЗАЦИЯ
       const normalized = normalizeLine(protocol, decodedPayload, suffix);
       if (!normalized) continue;
-
       // JSON
       let jsonObj = null;
       const jsonStart = normalized.indexOf('{');
       if (jsonStart > 0) {
         try { jsonObj = JSON.parse(normalized.slice(jsonStart)); } catch {}
       }
-
       // ФИЛЬТРЫ
       if (checkInsecureFlags(normalized, jsonObj)) { log.push(`Excluded (insecure) -> ${normalized}`); continue; }
       if (securityForbidden(normalized, jsonObj)) { log.push(`Excluded (none/auto) -> ${normalized}`); continue; }
       if (!hasRequiredParam(normalized, jsonObj)) { log.push(`Excluded (no crypto) -> ${normalized}`); continue; }
       if (!portIs443(normalized, jsonObj)) { log.push(`Excluded (port ≠ 443) -> ${normalized}`); continue; }
-
       const hp = parseHostPortFromNormalized(normalized);
       if (!hp?.host || !hp?.port) { log.push(`Excluded (no host/port) -> ${normalized}`); continue; }
-
       tasks.push(limit(async () => {
         log.push(`Probing ${hp.host}:${hp.port}`);
         if (await probeEndpoint(hp.host, hp.port, log)) {
@@ -252,12 +219,9 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
         }
       }));
     }
-
     await Promise.all(tasks);
     log.push(`Done ${src}`);
   }
-
   return { results, log };
 }
-
 module.exports = { parseSources };
