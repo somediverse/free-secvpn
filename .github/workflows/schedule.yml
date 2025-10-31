@@ -12,8 +12,14 @@ jobs:
     strategy:
       fail-fast: false   # ← Добавлено: не останавливать на ошибке
     steps:
+      - uses: hmarr/debug-action@v3
       - name: Checkout repository
         uses: actions/checkout@v5
+      - name: Download 24hrs Old Logs
+        uses: pawanbahuguna/action-logs/@v2.0.0
+        env: 
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_REPO: ${{ github.repository }}        
         with:
           fetch-depth: 0
 
