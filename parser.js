@@ -157,21 +157,34 @@ async function probeEndpoint(host, port, log) {
 // === ОСНОВНАЯ ЛОГИКА ===
 async function parseSources(sources, { concurrency = 50 } = {}) {
   const results = [], seen = new Set(), log = [], limit = pLimit(concurrency);
+  console.log(`Starting parseSources with ${sources.length} sources`);
+
   for (const src of sources) {
     if (!src) continue;
     log.push(`Fetching ${src}`);
     let text;
-    try { text = await (await fetch(src)).text(); } catch (e) { log.push(`Fetch error: ${e.message}`); continue; }
+    try {
+      text = await (await fetch(src)).text();
+      log.push(`Fetched ${text.length} characters from ${src}`);
+    } catch (e) {
+      log.push(`Fetch error: ${e.message}`);
+      continue;
+    }
+
     const lines = text ? text.split(/\r?\n/) : [];
-    let i = 0, tasks = [];
+    log.push(`Processing ${lines.length} lines from ${src}`);
+    let processedLines = 0;
+
     while (i < lines.length) {
       let line = lines[i++];
       if (!line) continue;
+
       line = line.trim();
       if (!line) continue;
+
       const m = line.match(PROTOCOL_RE);
       if (!m) continue;
-      
+
       const protocol = m[1] ? m[1].toLowerCase() : '';
       let rest = m[2];
       
@@ -220,11 +233,16 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
           } catch (e) {
             log.push(`URI decode error for payload "${payload}": ${e.message}`);
             continue;
-          }
-        }
+      processedLines++;
+      if (processedLines % 100 === 0) {
+        log.push(`Processed ${processedLines} lines so far`);
       }
     }
+    
+    log.push(`Finished processing ${src}: ${processedLines} lines processed`);
   }
+
+  console.log(`parseSources completed: ${results.length} results, ${log.length} log entries`);
   return { results, log };
 }
 module.exports = { parseSources };
