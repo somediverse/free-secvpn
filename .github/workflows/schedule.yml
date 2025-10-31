@@ -18,8 +18,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+        steps:
       - name: Install dependencies
         run: npm install
+      - name: Clean install
+        run: npm ci
       - name: Run parser
         run: node index.js
       - name: Commit results if changed
