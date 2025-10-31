@@ -24,8 +24,7 @@ function safeJsonParse(s) {
 
 function isBase64(str) {
   if (!str || typeof str !== 'string') return false;
-  const maybe = str.split('?')[0].split('#')[0];
-  const cleaned = maybe.replace(/[\r\n\s]/g, '');
+  const cleaned = str.split('?')[0].split('#')[0].replace(/[\r\n\s]/g, '');
   return /^[A-Za-z0-9+/=]+$/.test(cleaned) && cleaned.length % 4 === 0;
 }
 
@@ -33,8 +32,7 @@ function decodeBase64IfNeeded(s) {
   if (!s) return s;
   if (isBase64(s)) {
     try {
-      const buf = Buffer.from(s, 'base64');
-      const decoded = buf.toString('utf8');
+      const decoded = Buffer.from(s, 'base64').toString('utf8');
       if (decoded.includes('{') || decoded.includes('://') || decoded.includes('add') || decoded.includes('port')) {
         return decoded;
       }
@@ -43,16 +41,15 @@ function decodeBase64IfNeeded(s) {
   return s;
 }
 
-function flattenJsonToUrl(protocol, obj, originalSuffix) {
+function flattenJsonToUrl(protocol, obj, suffix) {
   const host = obj.add || obj.address || obj.host || obj.ip || obj.server || '';
   const port = obj.port || obj.p || obj.sport || '';
   let userinfo = '';
   if (obj.id || obj.uuid || obj.user) userinfo = obj.id || obj.uuid || obj.user;
   else if (obj.method && obj.password) userinfo = obj.password;
   else if (obj.auth) userinfo = obj.auth;
-  let authority = '';
-  if (userinfo) authority = `${userinfo}@`;
-  authority += host || '';
+  let authority = userinfo ? `${userinfo}@` : '';
+  authority += host;
   if (port) authority += `:${port}`;
   const q = [];
   const skip = new Set(['add','address','host','ip','server','port','p','id','uuid','user','password','pass','auth','ps']);
@@ -63,218 +60,160 @@ function flattenJsonToUrl(protocol, obj, originalSuffix) {
     q.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
   }
   const query = q.length ? `?${q.join('&')}` : '';
-  const comment = originalSuffix ? ` ${originalSuffix}` : '';
+  const comment = suffix ? ` ${suffix}` : '';
   return `${protocol}://${authority}${query}${comment}`.trim();
 }
 
 function checkInsecureFlags(lineLower, jsonObj) {
   if (!lineLower) return false;
-  const insecurePatterns = ['insecure=1','insecure: 1','allowinsecure=1','skip-cert-verify=true','skip-cert-verify: true','insecure: true','insecure:true'];
-  for (const p of insecurePatterns) if (lineLower.includes(p)) return true;
-  if (jsonObj) {
-    const bad = ['insecure','allowInsecure','skip-cert-verify'];
-    for (const k of bad) {
-      if (Object.prototype.hasOwnProperty.call(jsonObj, k)) {
-        const v = jsonObj[k];
-        if (v === true || v === '1' || v === 1 || String(v) === 'true') return true;
-      }
-    }
-  }
-  return false;
+  const patterns = ['insecure=1','insecure: 1','allowinsecure=1','skip-cert-verify=true','skip-cert-verify: true','insecure: true','insecure:true'];
+  return patterns.some(p => lineLower.includes(p)) ||
+         (jsonObj && ['insecure','allowInsecure','skip-cert-verify'].some(k =>
+           Object.hasOwn(jsonObj, k) && [true, '1', 1, 'true'].includes(jsonObj[k])
+         ));
 }
 
 function securityForbidden(lineLower, jsonObj) {
   if (!lineLower) return false;
   const forbidden = ['none', 'auto'];
-  const patterns = ['security', 'scy', 'sc'];
-  for (const p of patterns) {
-    const re = new RegExp(`${p}\\s*[=:]\\s*([^\\s;,&}]+)`, 'i');
-    const m = lineLower.match(re);
-    if (m && forbidden.includes(m[1].toLowerCase())) return true;
-  }
-  if (jsonObj && jsonObj.security && forbidden.includes(String(jsonObj.security).toLowerCase())) return true;
-  return false;
+  const re = /(security|scy|sc)\s*[=:]?\s*([^\s;,&}]+)/i;
+  const m = lineLower.match(re);
+  if (m && forbidden.includes(m[2].toLowerCase())) return true;
+  return jsonObj?.security && forbidden.includes(String(jsonObj.security).toLowerCase());
 }
 
 function hasRequiredParam(lineLower, jsonObj) {
   if (!lineLower) return false;
-  const checkValue = (val) => {
-    if (!val) return false;
-    const s = String(val).toLowerCase();
-    return s.includes('tls') || s.includes('reality') || s.endsWith('-gcm') || s.endsWith('-poly1305');
-  };
-  const paramPatterns = ['security','method','cipher','scy','sc','crypt'];
-  for (const p of paramPatterns) {
-    const re = new RegExp(`${p}\\s*[=:\"]\\s*([^\\s;,&}]+)`, 'i');
-    const m = lineLower.match(re);
-    if (m && checkValue(m[1])) return true;
-  }
-  if (jsonObj) {
-    const keys = ['security','scy','method','cipher'];
-    for (const k of keys) if (jsonObj[k] && checkValue(jsonObj[k])) return true;
-  }
-  return false;
+  const ok = v => v && (String(v).toLowerCase().includes('tls') || String(v).toLowerCase().includes('reality') || /-(gcm|poly1305)$/.test(String(v).toLowerCase()));
+  const re = /(security|method|cipher|scy|sc|crypt)\s*[=:\"]?\s*([^\s;,&}]+)/i;
+  const m = lineLower.match(re);
+  if (m && ok(m[2])) return true;
+  return ['security','scy','method','cipher'].some(k => jsonObj?.[k] && ok(jsonObj[k]));
 }
 
 function portIs443(lineLower, jsonObj) {
   if (!lineLower) return false;
-  const portMatch = lineLower.match(/port\s*[=:]?\s*(\d+)/i);
-  if (portMatch && portMatch[1] === '443') return true;
-  if (jsonObj && jsonObj.port === 443) return true;
-  return false;
+  const m = lineLower.match(/port\s*[=:]?\s*(\d+)/i);
+  if (m && m[1] === '443') return true;
+  return jsonObj?.port === 443 || jsonObj?.port === '443';
 }
 
 function parseHostPortFromNormalized(normalized) {
   try {
     const u = new URL(normalized.replace(/^[a-z]+:\/\//i, 'http://'));
     return { host: u.hostname, port: u.port || '443' };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
 function extractCommentSuffix(raw) {
-  const hashIdx = raw.indexOf(' # ');
-  if (hashIdx >= 0) return raw.slice(hashIdx);
-  const hashIdx2 = raw.lastIndexOf('#');
-  if (hashIdx2 >= 0 && hashIdx2 > raw.length - 60) return raw.slice(hashIdx2);
-  return '';
+  const i1 = raw.indexOf(' # ');
+  if (i1 >= 0) return raw.slice(i1);
+  const i2 = raw.lastIndexOf('#');
+  return i2 >= 0 && i2 > raw.length - 60 ? raw.slice(i2) : '';
 }
 
-// === ДОБАВЛЕНА ФУНКЦИЯ normalizeLine ===
+// === ФИНАЛЬНАЯ normalizeLine (ИСПРАВЛЕНА) ===
 function normalizeLine(protocol, payload, suffix, log) {
-  let decoded = decodeBase64IfNeeded(payload);
-  let jsonObj = null;
+  const decoded = decodeBase64IfNeeded(payload) || payload;
   let finalLine = `${protocol}://${decoded}${suffix || ''}`.trim();
 
-  const jsonMatch = decoded.match(/^\{[\s\S]*\}$/);
-  if (jsonMatch) {
-    jsonObj = safeJsonParse(jsonMatch[0]);
+  // Попытка JSON
+  const jsonStr = decoded.trim();
+  if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
+    const jsonObj = safeJsonParse(jsonStr);
     if (jsonObj) {
       finalLine = flattenJsonToUrl(protocol, jsonObj, suffix);
     }
   }
 
-  return finalLine;
+  return finalLine; // ← ГАРАНТИРОВАННО СТРОКА
 }
 
 // === Пробники ===
 async function tcpReachable(host, port, timeout = 2000) {
-  return new Promise(resolve => {
-    const sock = net.createConnection({ host, port }, () => {
-      sock.destroy();
-      resolve(true);
-    });
-    sock.setTimeout(timeout);
-    sock.on('timeout', () => { sock.destroy(); resolve(false); });
-    sock.on('error', () => resolve(false));
+  return new Promise(r => {
+    const s = net.createConnection({ host, port }, () => { s.destroy(); r(true); });
+    s.setTimeout(timeout, () => { s.destroy(); r(false); });
+    s.on('error', () => r(false));
   });
 }
 
 async function tlsHandshake(host, port, timeout = 2500) {
-  return new Promise(resolve => {
-    const sock = tls.connect({ host, port, rejectUnauthorized: false }, () => {
-      sock.end();
-      resolve(true);
-    });
-    sock.setTimeout(timeout);
-    sock.on('timeout', () => { sock.destroy(); resolve(false); });
-    sock.on('error', () => resolve(false));
+  return new Promise(r => {
+    const s = tls.connect({ host, port, rejectUnauthorized: false }, () => { s.end(); r(true); });
+    s.setTimeout(timeout, () => { s.destroy(); r(false); });
+    s.on('error', () => r(false));
   });
 }
 
 async function udpProbe(host, port, timeout = 1200) {
-  return new Promise(resolve => {
+  return new Promise(r => {
     const s = dgram.createSocket('udp4');
-    const onDone = (ok) => { s.close(); resolve(ok); };
-    s.on('message', () => onDone(true));
-    s.on('error', () => onDone(false));
-    const msg = Buffer.from([0]);
-    try { s.send(msg, 0, msg.length, port, host, (err) => { if (err) onDone(false); }); }
-    catch (e) { onDone(false); }
-    setTimeout(() => onDone(false), timeout);
+    const done = ok => { s.close(); r(ok); };
+    s.on('message', () => done(true));
+    s.on('error', () => done(false));
+    try { s.send(Buffer.from([0]), 0, 1, port, host, err => err && done(false)); }
+    catch { done(false); }
+    setTimeout(() => done(false), timeout);
   });
 }
 
 async function probeEndpoint(host, port, log) {
-  const tcp = await tcpReachable(host, port, 2000);
-  if (!tcp) { log.push(`TCP closed ${host}:${port}`); return false; }
+  if (!await tcpReachable(host, port)) { log.push(`TCP closed ${host}:${port}`); return false; }
   log.push(`TCP open ${host}:${port}`);
-
-  const tlsOk = await tlsHandshake(host, port, 2500);
-  if (tlsOk) { log.push(`TLS handshake succeeded ${host}:${port}`); return true; }
-  log.push(`TLS handshake failed ${host}:${port}`);
-
-  const udpOk = await udpProbe(host, port, 1200);
-  if (udpOk) { log.push(`UDP probe responded ${host}:${port}`); return true; }
-  log.push(`UDP probe failed ${host}:${port}`);
+  if (await tlsHandshake(host, port)) { log.push(`TLS OK ${host}:${port}`); return true; }
+  log.push(`TLS failed ${host}:${port}`);
+  if (await udpProbe(host, port)) { log.push(`UDP OK ${host}:${port}`); return true; }
+  log.push(`UDP failed ${host}:${port}`);
   return false;
 }
 
-async function parseSources(sources, options = { concurrency: 50 }) {
-  const results = [];
-  const seen = new Set();
-  const log = [];
-  const limit = pLimit(options.concurrency || 50);
+async function parseSources(sources, { concurrency = 50 } = {}) {
+  const results = [], seen = new Set(), log = [], limit = pLimit(concurrency);
 
   for (const src of sources) {
-    log.push(`Fetching ${src} ...`);
-    let text = '';
-    try {
-      const res = await fetch(src);
-      text = await res.text();
-    } catch (err) {
-      log.push(`ERROR fetching ${src}: ${err.message}`);
-      continue;
-    }
+    log.push(`Fetching ${src}`);
+    let text;
+    try { text = (await fetch(src)).text(); } catch (e) { log.push(`Fetch error: ${e.message}`); continue; }
+    await text;
 
     const lines = text.split(/\r?\n/);
-    let i = 0;
-    const tasks = [];
+    let i = 0, tasks = [];
 
     while (i < lines.length) {
-      let line = lines[i].trim();
-      i++;
+      let line = lines[i++].trim();
       if (!line) continue;
+      const m = line.match(PROTOCOL_RE);
+      if (!m) continue;
 
-      const protoMatch = line.match(PROTOCOL_RE);
-      if (!protoMatch) continue;
+      const protocol = m[1].toLowerCase();
+      let rest = m[2];
 
-      const protocol = protoMatch[1].toLowerCase();
-      let rest = protoMatch[2];
-
-      if ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}'))) {
-        let block = rest;
-        let depth = 0;
-        for (const ch of block) if (ch === '{') depth++; else if (ch === '}') depth--;
+      // Многострочный JSON
+      if ((rest.includes('{') && !rest.includes('}')) || (rest.startsWith('{') && !rest.endsWith('}'))) {
+        let depth = 0, block = rest;
+        for (const c of block) if (c === '{') depth++; else if (c === '}') depth--;
         while (depth > 0 && i < lines.length) {
-          const next = lines[i];
-          i++;
+          const next = lines[i++];
           block += '\n' + next;
-          for (const ch of next) {
-            if (ch === '{') depth++;
-            if (ch === '}') depth--;
-          }
+          for (const c of next) if (c === '{') depth++; else if (c === '}') depth--;
         }
         rest = block;
       }
 
       const suffix = extractCommentSuffix(rest);
-      const payloadNoSuffix = suffix ? rest.replace(suffix, '').trim() : rest.trim();
-      let payloadDecoded = decodeURIComponent(payloadNoSuffix);
+      const payload = suffix ? rest.slice(0, rest.indexOf(suffix)).trim() : rest.trim();
+      const decodedPayload = decodeURIComponent(payload);
 
-      const normalized = normalizeLine(protocol, payloadDecoded, suffix, log);
+      const normalized = normalizeLine(protocol, decodedPayload, suffix, log);
       const lower = normalized.toLowerCase();
 
       let jsonObj = null;
-      const jIdx = normalized.indexOf('://');
-      if (jIdx >= 0) {
-        const after = normalized.slice(jIdx + 3);
-        const maybeJsonStart = after.indexOf('{');
-        if (maybeJsonStart >= 0) {
-          const jstr = after.slice(maybeJsonStart);
-          jsonObj = safeJsonParse(jstr);
-        }
+      const jsonStart = normalized.indexOf('{');
+      if (jsonStart > 0) {
+        try { jsonObj = JSON.parse(normalized.slice(jsonStart)); } catch {}
       }
 
       if (checkInsecureFlags(lower, jsonObj)) { log.push(`Excluded (insecure) -> ${normalized}`); continue; }
@@ -283,30 +222,22 @@ async function parseSources(sources, options = { concurrency: 50 }) {
       if (!portIs443(lower, jsonObj)) { log.push(`Excluded (port ≠ 443) -> ${normalized}`); continue; }
 
       const hp = parseHostPortFromNormalized(normalized);
-      if (!hp || !hp.host || !hp.port) { log.push(`Excluded (no host/port) -> ${normalized}`); continue; }
+      if (!hp?.host || !hp?.port) { log.push(`Excluded (no host/port) -> ${normalized}`); continue; }
 
-      const task = limit(async () => {
-        log.push(`Probing ${hp.host}:${hp.port} ...`);
-        try {
-          const ok = await probeEndpoint(hp.host, hp.port, log);
-          if (!ok) { log.push(`Excluded (unreachable) -> ${normalized}`); return; }
-          const finalLine = normalized.replace(/\s+$/, '');
-          if (!seen.has(finalLine)) {
-            seen.add(finalLine);
-            results.push(finalLine);
-            log.push(`Included -> ${finalLine}`);
-          } else {
-            log.push(`Skipped duplicate -> ${finalLine}`);
-          }
-        } catch (e) {
-          log.push(`Probe error ${hp.host}:${hp.port} -> ${e.message}`);
+      tasks.push(limit(async () => {
+        log.push(`Probing ${hp.host}:${hp.port}`);
+        if (await probeEndpoint(hp.host, hp.port, log)) {
+          const final = normalized.trim();
+          if (!seen.has(final)) { seen.add(final); results.push(final); log.push(`Included -> ${final}`); }
+          else log.push(`Duplicate -> ${final}`);
+        } else {
+          log.push(`Unreachable -> ${normalized}`);
         }
-      });
-      tasks.push(task);
+      }));
     }
 
     await Promise.all(tasks);
-    log.push(`Finished parsing ${src}`);
+    log.push(`Done ${src}`);
   }
 
   return { results, log };
