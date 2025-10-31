@@ -36,15 +36,12 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: "gpt-5-nano"
 
-      - name: Debug Action
-        uses: hmarr/debug-action@v3
-
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js environment
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -53,34 +50,7 @@ jobs:
         run: npm ci
 
       - name: Run parser
-        run: |
-          set -e
-          node index.js 2>&1 | tee parser.log
-        continue-on-error: true
-        shell: bash
-
-      - name: Debug logs if failed
-        if: failure()
-        run: |
-          echo "=== PARSER LOG ==="
-          cat parser.log || echo "No parser.log"
-          echo "=== NODE VERSION ==="
-          node --version
-          echo "=== NPM LIST ==="
-          npm ls
-          echo "=== DIR CONTENTS ==="
-          ls -la
-        shell: bash
-
-      - name: Upload a Build Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: parser-logs
-          path: |
-            parser.log
-            results/last_run.log
-          retention-days: 7
+        run: node index.js
 
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
