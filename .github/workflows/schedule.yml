@@ -46,7 +46,7 @@ jobs:
         shell: bash
 
 - name: Upload a Build Artifact
-  uses: actions/upload-artifact@v5.0.00
+  uses: actions/upload-artifact@v5.0.0
         if: always()  # Всегда, даже при успехе
         with:
           name: parser-logs
