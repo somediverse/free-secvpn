@@ -7,284 +7,143 @@
  *
  * NOTE: UDP/QUIC detection is best-effort — QUIC may not respond to an empty UDP packet. This step
  * improves detection for many UDP-capable VPN servers but cannot guarantee 100% for all QUIC servers.
- * upd. Parser module with concurrency, TCP reachability, TLS handshake and UDP
- * updated:
- * - Гарантировано нет undefined.includes
- * - checkInsecureFlag
- * - Updated to handle vmess JSON format
- * - Added proper error handling for malformed URIs
  */
-const pLimit = require('p-limit');
+
 const fetch = require('node-fetch');
+const yaml = require('js-yaml');
 const net = require('net');
 const tls = require('tls');
 const dgram = require('dgram');
-const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/(.*)$/s;
-function isIPAddress(host) {
-  return /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/.test(host);
+const pLimit = require('p-limit');
+
+const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/.*$/s;
+
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch (e) { return null; }
 }
+
+function isBase64(str) {
+  if (!str || typeof str !== 'string') return false;
+  const maybe = str.split('?')[0].split('#')[0];
+  const cleaned = maybe.replace(/[\r\n\s]/g, '');
+  return /^[A-Za-z0-9+/=]+$/.test(cleaned) && cleaned.length % 4 === 0;
+}
+
+function decodeBase64IfNeeded(s) {
+  if (!s) return s;
+  if (isBase64(s)) {
+    try {
+      const buf = Buffer.from(s, 'base64');
+      const decoded = buf.toString('utf8');
+      if (decoded.includes('{') || decoded.includes('://') || decoded.includes('add') || decoded.includes('port')) {
+        return decoded;
+      }
+    } catch (e) {}
+  }
+  return s;
+}
+
+function flattenJsonToUrl(protocol, obj, originalSuffix) {
+  const host = obj.add || obj.address || obj.host || obj.ip || obj.server || '';
+  const port = obj.port || obj.p || obj.sport || '';
+  let userinfo = '';
+  if (obj.id || obj.uuid || obj.user) userinfo = obj.id || obj.uuid || obj.user;
+  else if (obj.method && obj.password) userinfo = obj.password;
+  else if (obj.auth) userinfo = obj.auth;
+  let authority = '';
+  if (userinfo) authority = `${userinfo}@`;
+  authority += host || '';
+  if (port) authority += `:${port}`;
+  const q = [];
+  const skip = new Set(['add','address','host','ip','server','port','p','id','uuid','user','password','pass','auth','ps']);
+  for (const k of Object.keys(obj)) {
+    if (skip.has(k)) continue; const v = obj[k]; if (v===null||v===undefined||v==='') continue; q.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  }
+  const query = q.length ? `?${q.join('&')}` : '';
+  const comment = originalSuffix ? ` ${originalSuffix}` : '';
+  return `${protocol}://${authority}${query}${comment}`.trim();
+}
+
+function checkInsecureFlags(lineLower, jsonObj) {
+  const insecurePatterns = ['insecure=1','insecure: 1','allowinsecure=1','skip-cert-verify=true','skip-cert-verify: true','insecure: true','insecure:true'];
+  for (const p of insecurePatterns) if (lineLower.includes(p)) return true;
+  if (jsonObj) {
+    const bad = ['insecure','allowInsecure','skip-cert-verify'];
+    for (const k of bad) if (Object.prototype.hasOwnProperty.call(jsonObj,k)) { const v=jsonObj[k]; if (v===true||v==='1'||v===1||String(v)==='true') return true; }
+  }
+  return false;
+}
+
 function extractCommentSuffix(raw) {
-  if (!raw) return '';
-  const i1 = raw.indexOf(' # ');
-  if (i1 >= 0) return raw.slice(i1);
-  const i2 = raw.lastIndexOf('#');
-  return i2 >= 0 && i2 > raw.length - 60 ? raw.slice(i2) : '';
-}
-function checkInsecureFlag(protocol, port) {
-  // Allow insecure connections for non-standard ports or specific protocols
-  return protocol === 'ss' || protocol === 'vmess' || port !== 443;
-}
-function parseVmessJson(jsonStr) {
-  try {
-    const config = JSON.parse(jsonStr);
-    const { add, port, id, aid = '0', net = 'tcp', type = '', host = '', path = '', tls = '0', sni = '', ps = '', v = '2' } = config;
-    
-    // Конвертация vmess из JSON в URI формат
-    const uuid = id;
-    const security = tls === 'tls' ? 'tls' : 'none';
-    const network = net;
-    const hostParam = host || sni;
-    const pathParam = path;
-    const sniParam = sni || host;
-    const alterId = aid;
-    const remark = ps;
-    
-    // Формируем URI
-    const params = new URLSearchParams({
-      encryption: 'auto',
-      security,
-      type: network,
-      host: hostParam,
-      path: pathParam,
-      sni: sniParam,
-      ps: remark,
-      uuid,
-      alterId,
-      tls: tls === 'tls' ? '1' : '0'
+  const hashIdx = raw.indexOf(' # '); if (hashIdx>=0) return raw.slice(hashIdx); const hashIdx2 = raw.lastIndexOf('#'); if (hashIdx2>=0 && hashIdx2>raw.length-60) return raw.slice(hashIdx2); return ''; }
+
+function hasRequiredParam(lineLower, jsonObj) { const checkValue=(val)=>{ if(!val) return false; const s=String(val).toLowerCase(); if(s.includes('tls')) return true; if(s.includes('reality')) return true; if(s.endsWith('-gcm')) return true; if(s.endsWith('-poly1305')) return true; if(/-gcm\b/.test(s)) return true; if(/-poly1305\b/.test(s)) return true; return false; };
+  const paramPatterns=['security','method','cipher','scy','sc','crypt'];
+  for(const p of paramPatterns){ const re=new RegExp(`${p}\s*[=:\"]\s*([^\s;,&]+)`,'i'); const m=lineLower.match(re); if(m && checkValue(m[1])) return true; }
+  if(jsonObj){ const keys=['security','method','cipher','scy','crypt']; for(const k of keys) if(Object.prototype.hasOwnProperty.call(jsonObj,k)) if(checkValue(jsonObj[k])) return true; }
+  return false; }
+
+function portIs443(lineLower, jsonObj){ if(/:443\b/.test(lineLower)) return true; if(/port["']?\s*[:=]\s*["']?443\b/.test(lineLower)) return true; if(jsonObj && (String(jsonObj.port)==='443' || Number(jsonObj.port)===443)) return true; return false; }
+
+function securityForbidden(lineLower,jsonObj){ const re=/security\s*[=:\"]\s*([a-zA-Z0-9_-]+)/i; const m=lineLower.match(re); if(m){ const v=m[1].toLowerCase(); if(v==='none'||v==='auto') return true;} if(jsonObj && Object.prototype.hasOwnProperty.call(jsonObj,'security')){ const v=String(jsonObj.security).toLowerCase(); if(v==='none'||v==='auto'||v==='') return true;} return false; }
+
+function normalizeLine(protocol,payload,suffix,log){ const orig=`${protocol}://${payload}${suffix? ' '+suffix : ''}`; const dec=decodeBase64IfNeeded(payload); if(dec!==payload){ log.push(`Decoded base64 payload for ${protocol}://...`); const m2=dec.match(PROTOCOL_RE); if(m2) return normalizeLine(m2[1],m2[2],suffix,log); const j=safeJsonParse(dec); if(j) return flattenJsonToUrl(protocol,j,suffix); try{ const y=yaml.load(dec); if(y && typeof y==='object') return flattenJsonToUrl(protocol,y,suffix);}catch(e){} return `${protocol}://${dec}${suffix? ' '+suffix:''}`; } const pTrim=payload.trim(); if(pTrim.startsWith('{')||pTrim.startsWith('[')){ const j=safeJsonParse(pTrim); if(j && typeof j==='object') return flattenJsonToUrl(protocol,j,suffix); else { try{ const y=yaml.load(pTrim); if(y && typeof y==='object') return flattenJsonToUrl(protocol,y,suffix);}catch(e){} return orig; } } const idx=payload.indexOf('{'); if(idx>=0){ const jstr=payload.slice(idx); const j=safeJsonParse(jstr); if(j) return flattenJsonToUrl(protocol,j,suffix); } return orig; }
+
+async function fetchText(url){ const res=await fetch(url,{ timeout:30000}); if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`); return await res.text(); }
+
+function parseHostPortFromNormalized(normalized){ try{ const m=normalized.match(PROTOCOL_RE); if(!m) return null; let after=m[2]; const commentIdx=after.indexOf(' #'); if(commentIdx>=0) after=after.slice(0,commentIdx); const qIdx=after.indexOf('?'); if(qIdx>=0) after=after.slice(0,qIdx); const atIdx=after.lastIndexOf('@'); if(atIdx>=0) after=after.slice(atIdx+1); const hpMatch=after.match(/^(.+?)(?::(\d+))?/); if(!hpMatch) return null; const host=hpMatch[1]; const port=hpMatch[2]? Number(hpMatch[2]) : null; return {host,port}; }catch(e){ return null; } }
+
+function tcpReachable(host,port,timeout=2000){ return new Promise((resolve)=>{ if(!host||!port) return resolve(false); const socket=new net.Socket(); let finished=false; const onDone=(up)=>{ if(finished) return; finished=true; try{ socket.destroy(); }catch(e){} resolve(up); }; socket.setTimeout(timeout); socket.once('connect',()=>onDone(true)); socket.once('timeout',()=>onDone(false)); socket.once('error',()=>onDone(false)); socket.connect(port,host); }); }
+
+function tlsHandshake(host,port,timeout=3000){ return new Promise((resolve)=>{ let finished=false; const opts={host,port,servername:host,rejectUnauthorized:false}; const sock=tls.connect(opts,()=>{ if(finished) return; finished=true; try{ sock.end(); }catch(e){} resolve(true); }); sock.setTimeout(timeout,()=>{ if(finished) return; finished=true; try{ sock.destroy(); }catch(e){} resolve(false); }); sock.once('error',()=>{ if(finished) return; finished=true; try{ sock.destroy(); }catch(e){} resolve(false); }); }); }
+
+function udpProbe(host,port,timeout=1500){ return new Promise((resolve)=>{ if(!host||!port) return resolve(false); const s=dgram.createSocket('udp4'); let done=false; const onDone=(ok)=>{ if(done) return; done=true; try{ s.close(); }catch(e){} resolve(ok); }; s.once('error',()=>onDone(false)); s.on('message',()=>onDone(true)); const msg=Buffer.from([0]); try{ s.send(msg,0,msg.length,port,host,(err)=>{ if(err) return onDone(false); // wait for response
+ }); }catch(e){ return onDone(false); } setTimeout(()=>onDone(false),timeout); }); }
+
+async function probeEndpoint(host,port,log){ // perform TCP, then TLS, and UDP probe in parallel but with overall timeout
+  const tcp = await tcpReachable(host,port,2000);
+  if(!tcp){ log.push(`TCP closed ${host}:${port}`); return false; }
+  log.push(`TCP open ${host}:${port}`);
+  // TLS handshake (most VPN servers using 443 for TLS will respond)
+  const tlsOk = await tlsHandshake(host,port,2500);
+  if(tlsOk){ log.push(`TLS handshake succeeded ${host}:${port}`); return true; }
+  log.push(`TLS handshake failed ${host}:${port}`);
+  // UDP probe as fallback (for UDP/QUIC oriented servers)
+  const udpOk = await udpProbe(host,port,1200);
+  if(udpOk){ log.push(`UDP probe responded ${host}:${port}`); return true; }
+  log.push(`UDP probe failed ${host}:${port}`);
+  return false; }
+
+async function parseSources(sources, options={concurrency:50}){
+  const results=[]; const seen=new Set(); const log=[]; const limit=pLimit(options.concurrency||50);
+  for(const src of sources){ log.push(`Fetching ${src} ...`); let text=''; try{ text=await fetchText(src); }catch(err){ log.push(`ERROR fetching ${src}: ${err.message}`); continue; } const lines=text.split(/\r?\n/); let i=0; const tasks=[]; while(i<lines.length){ let line=lines[i].trim(); i++; if(!line) continue; const protoMatch=line.match(PROTOCOL_RE); if(!protoMatch) continue; const protocol=protoMatch[1]; let rest=protoMatch[2]; if((rest.includes('{') && !rest.includes('}')) || rest.trim().startsWith('{') && !rest.trim().endsWith('}')){ let block=rest; let depth=0; if(block.includes('{')){ for(const ch of block) if(ch==='{' ) depth++; for(const ch of block) if(ch==='}') depth--; } while(depth>0 && i<lines.length){ const next=lines[i]; i++; block+='\n'+next; for(const ch of next){ if(ch==='{') depth++; if(ch==='}') depth--; } } rest=block; }
+    const suffix=extractCommentSuffix(rest);
+    const payloadNoSuffix=suffix? rest.replace(suffix,'').trim() : rest.trim();
+    let payloadDecoded=decodeURIComponent(payloadNoSuffix);
+    const normalized=normalizeLine(protocol,payloadDecoded,suffix,log);
+    const lower=normalized.toLowerCase();
+    let jsonObj=null; const jIdx=normalized.indexOf('://'); if(jIdx>=0){ const after=normalized.slice(jIdx+3); const maybeJsonStart=after.indexOf('{'); if(maybeJsonStart>=0){ const jstr=after.slice(maybeJsonStart); jsonObj=safeJsonParse(jstr); } }
+    if(checkInsecureFlags(lower,jsonObj)){ log.push(`Excluded (insecure flags) -> ${normalized}`); continue; }
+    if(securityForbidden(lower,jsonObj)){ log.push(`Excluded (security forbidden none/auto) -> ${normalized}`); continue; }
+    if(!hasRequiredParam(lower,jsonObj)){ log.push(`Excluded (missing required parameter with allowed value) -> ${normalized}`); continue; }
+    if(!portIs443(lower,jsonObj)){ log.push(`Excluded (port != 443) -> ${normalized}`); continue; }
+    const hp=parseHostPortFromNormalized(normalized);
+    if(!hp||!hp.host||!hp.port){ log.push(`Excluded (cannot parse host/port) -> ${normalized}`); continue; }
+    // schedule probe task with concurrency limit
+    const task = limit(async ()=>{
+      log.push(`Probing ${hp.host}:${hp.port} ...`);
+      try{
+        const ok = await probeEndpoint(hp.host,hp.port,log);
+        if(!ok){ log.push(`Excluded (unreachable) -> ${normalized}`); return; }
+        const finalLine=normalized.replace(/\s+$/,''); if(!seen.has(finalLine)){ seen.add(finalLine); results.push(finalLine); log.push(`Included -> ${finalLine}`); } else { log.push(`Skipped duplicate -> ${finalLine}`); }
+      }catch(e){ log.push(`Probe error ${hp.host}:${hp.port} -> ${e.message}`); }
     });
-    
-    // Удаляем пустые параметры
-    for (const [key, value] of params.entries()) {
-      if (!value) params.delete(key);
-    }
-    
-    const uri = `vmess://${add}:${port}?${params.toString()}#${encodeURIComponent(remark)}`;
-    return uri;
-  } catch (e) {
-    return null;
+    tasks.push(task);
   }
-}
-function parseSSUri(uri) {
-  const match = uri.match(/^ss:\/\/([^@]+)@([^:]+):(\d+)(?:\/\?(.*))?$/);
-  if (!match) return null;
-  
-  const [, method_and_password, host, port, query] = match;
-  const decoded = Buffer.from(method_and_password, 'base64').toString('utf-8');
-  const [method, password] = decoded.split(':');
-  
-  // Извлечение дополнительных параметров
-  const params = new URLSearchParams(query || '');
-  const plugin = params.get('plugin');
-  const obfs = params.get('obfs');
-  
-  return {
-    protocol: 'ss',
-    host,
-    port: parseInt(port),
-    method,
-    password,
-    plugin,
-    obfs
-  };
-}
-function parseVmessUri(uri) {
-  const match = uri.match(/^vmess:\/\/(.+)$/);
-  if (!match) return null;
-  
-  try {
-    const jsonStr = Buffer.from(match[1], 'base64').toString('utf-8');
-    return parseVmessJson(jsonStr);
-  } catch (e) {
-    return null;
+  // await all probe tasks for this source
+  await Promise.all(tasks);
+  log.push(`Finished parsing ${src}`);
   }
-}
-function parseProtocol(line) {
-  const m = line.match(PROTOCOL_RE);
-  if (!m) return null;
-  
-  const [, protocol, rest] = m;
-  const trimmedRest = rest.trim();
-  
-  if (protocol === 'ss') {
-    return parseSSUri(trimmedRest);
-  } else if (protocol === 'vmess') {
-    return parseVmessUri(trimmedRest);
-  }
-  
-  return null;
-}
-async function checkTcpConnection(host, port, timeout = 5000) {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(timeout);
-    socket.on('connect', () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.on('timeout', () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.on('error', () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.connect(port, host);
-  });
-}
-async function checkTlsHandshake(host, port, timeout = 5000) {
-  return new Promise((resolve) => {
-    const options = {
-      host,
-      port,
-      rejectUnauthorized: false,
-    };
-    
-    // Убрана явная установка servername для предотвращения DEP0123
-    const socket = tls.connect(options, () => {
-      socket.destroy();
-      resolve(true);
-    });
-    
-    socket.setTimeout(timeout);
-    socket.on('timeout', () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.on('error', () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
-}
-async function checkUdpConnection(host, port, timeout = 5000) {
-  return new Promise((resolve) => {
-    const client = dgram.createSocket('udp4');
-    client.on('error', () => {
-      client.close();
-      resolve(false);
-    });
-    client.on('message', () => {
-      client.close();
-      resolve(true);
-    });
-    client.on('timeout', () => {
-      client.close();
-      resolve(false);
-    });
-    
-    client.send(Buffer.alloc(0), port, host, (err) => {
-      if (err) {
-        client.close();
-        resolve(false);
-      } else {
-        client.setTimeout(timeout);
-      }
-    });
-  });
-}
-async function parseSources(sources, { concurrency = 50 } = {}) {
-  const results = [], seen = new Set(), log = [], limit = pLimit(concurrency);
-  for (const src of sources) {
-    if (!src) continue;
-    log.push(`Fetching ${src}`);
-    let text;
-    try { text = await (await fetch(src)).text(); } catch (e) { log.push(`Fetch error: ${e.message}`); continue; }
-    const lines = text ? text.split(/\r?\n/) : [];
-    let i = 0, tasks = [];
-    while (i < lines.length) {
-      let line = lines[i++];
-      if (!line) continue;
-      line = line.trim();
-      if (!line) continue;
-      const m = line.match(PROTOCOL_RE);
-      if (!m) continue;
-      
-      const protocol = m[1];
-      const rest = m[2].trim();
-      
-      // Проверяем, является ли это VMess JSON
-      if (protocol === 'vmess' && rest.startsWith('{')) {
-        const parsed = parseVmessJson(rest);
-        if (parsed) {
-          log.push(`Parsed vmess JSON: ${parsed}`);
-          line = parsed;
-        } else {
-          log.push(`Failed to parse vmess JSON: ${rest}`);
-          continue;
-        }
-      }
-      
-      const parsed = parseProtocol(line);
-      if (!parsed) {
-        log.push(`Failed to parse protocol: ${line}`);
-        continue;
-      }
-      
-      const { host, port } = parsed;
-      if (!host || !port) {
-        log.push(`Invalid host or port: ${line}`);
-        continue;
-      }
-      
-      // Проверяем уникальность
-      const key = `${host}:${port}`;
-      if (seen.has(key)) {
-        log.push(`Duplicate entry skipped: ${line}`);
-        continue;
-      }
-      seen.add(key);
-      
-      // Проверяем TCP соединение
-      const tcpOk = await checkTcpConnection(host, port);
-      if (!tcpOk) {
-        log.push(`TCP connection failed: ${host}:${port}`);
-        continue;
-      }
-      
-      // Проверяем TLS handshake если порт 443 или insecure флаг установлен
-      let tlsOk = true;
-      if (port === 443 || checkInsecureFlag(protocol, port)) {
-        tlsOk = await checkTlsHandshake(host, port);
-        if (!tlsOk) {
-          log.push(`TLS handshake failed: ${host}:${port}`);
-          continue;
-        }
-      }
-      
-      // Проверяем UDP если это UDP-совместимый протокол
-      let udpOk = true;
-      if (protocol === 'ss' || protocol === 'vmess') {
-        udpOk = await checkUdpConnection(host, port);
-        if (!udpOk) {
-          log.push(`UDP probe failed: ${host}:${port}`);
-        }
-      }
-      
-      // Фильтрация результатов
-      const isInsecure = checkInsecureFlag(protocol, port);
-      const isUDP = protocol === 'ss' || protocol === 'vmess';
-      
-      if (isInsecure || isUDP) {
-        const comment = extractCommentSuffix(line);
-        const finalLine = `${line}${comment}`;
-        results.push(finalLine);
-        log.push(`Added result: ${finalLine}`);
-      } else {
-        log.push(`Skipped result (secure & TCP-only): ${line}`);
-      }
-    }
-  }
-  return { results, log };
-}
+  return {results,log}; }
+
 module.exports = { parseSources };
