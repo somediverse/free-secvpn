@@ -170,89 +170,62 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
       line = line.trim();
       if (!line) continue;
       const m = line.match(PROTOCOL_RE);
-      if (!m || m.length < 3) {
-        log.push(`Skipping line due to regex match failure: ${line}`);
-        continue;
-      }
+      if (!m) continue;
       const protocol = m[1] ? m[1].toLowerCase() : '';
       let rest = m[2];
       
-      // Проверка на undefined для protocol
-      if (!protocol) {
-        log.push(`Skipping line due to undefined protocol: ${line}`);
-        continue;
-      }
-      
-      // Проверка на undefined для rest
-      if (!rest) {
-        log.push(`Skipping line due to undefined rest: ${line}`);
-        continue;
-      }
-      
       // Многострочный JSON
       if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
-        let depth = 0, block = rest;
-        for (const c of block) if (c === '{') depth++; else if (c === '}') depth--;
-        while (depth > 0 && i < lines.length) {
-          const next = lines[i++];
-          if (!next) continue;
-          block += '\n' + next;
-          for (const c of next) if (c === '{') depth++; else if (c === '}') depth--;
+        // Обработка многострочного JSON
+        const jsonLines = [rest];
+        while (i < lines.length) {
+          const nextLine = lines[i++].trim();
+          if (!nextLine) continue;
+          jsonLines.push(nextLine);
+          if (nextLine.includes('}')) break;
         }
-        rest = block;
+        rest = jsonLines.join('');
       }
       
-      const suffix = extractCommentSuffix(rest);
-      const payload = suffix ? rest.slice(0, rest.indexOf(suffix)).trim() : rest.trim();
-      const decodedPayload = decodeURIComponent(payload);
+      if (!rest) continue;
       
-      // Проверка на undefined для decodedPayload
-      if (decodedPayload === undefined) {
-        log.push(`Skipping line due to undefined decodedPayload: ${line}`);
-        continue;
-      }
-      
-      // НОРМАЛИЗАЦИЯ
-      const normalized = normalizeLine(protocol, decodedPayload, suffix);
-      
-      // Проверка на undefined для normalized
-      if (!normalized) {
-        log.push(`Skipping line due to undefined normalized: ${line}`);
-        continue;
-      }
-      
-      // JSON
-      let jsonObj = null;
-      const jsonStart = normalized.indexOf('{');
-      if (jsonStart > 0) {
-        try { jsonObj = JSON.parse(normalized.slice(jsonStart)); } catch {}
-      }
-      
-      // ФИЛЬТРЫ
-      if (checkInsecureFlags(normalized, jsonObj)) { log.push(`Excluded (insecure) -> ${normalized}`); continue; }
-      if (securityForbidden(normalized, jsonObj)) { log.push(`Excluded (none/auto) -> ${normalized}`); continue; }
-      if (!hasRequiredParam(normalized, jsonObj)) { log.push(`Excluded (no crypto) -> ${normalized}`); continue; }
-      if (!portIs443(normalized, jsonObj)) { log.push(`Excluded (port ≠ 443) -> ${normalized}`); continue; }
-      const hp = parseHostPortFromNormalized(normalized);
-      if (!hp?.host || !hp?.port) { log.push(`Excluded (no host/port) -> ${normalized}`); continue; }
-      tasks.push(limit(async () => {
-        log.push(`Probing ${hp.host}:${hp.port}`);
-        if (await probeEndpoint(hp.host, hp.port, log)) {
-          const final = normalized.trim();
-          if (!seen.has(final)) {
-            seen.add(final);
-            results.push(final);
-            log.push(`Included -> ${final}`);
+      // Обработка различных типов протоколов
+      if (protocol === 'vmess') {
+        try {
+          if (rest.startsWith('{')) {
+            // Это JSON
+            const jsonObj = JSON.parse(rest);
+            // Конвертация JSON в URI
+            const uri = convertVmessJsonToUri(jsonObj);
+            results.push(uri);
           } else {
-            log.push(`Duplicate -> ${final}`);
+            // Это base64 encoded
+            const decoded = Buffer.from(rest, 'base64').toString('utf-8');
+            if (decoded.startsWith('{')) {
+              const jsonObj = JSON.parse(decoded);
+              const uri = convertVmessJsonToUri(jsonObj);
+              results.push(uri);
+            } else {
+              results.push(`${protocol}://${rest}`);
+            }
           }
-        } else {
-          log.push(`Unreachable -> ${normalized}`);
+        } catch (e) {
+          log.push(`Skipping line due to JSON decode error: ${e.message}`);
+          continue;
         }
-      }));
+      } else if (protocol === 'ss') {
+        // Обработка SS протокола
+        try {
+          const decoded = Buffer.from(rest, 'base64').toString('utf-8');
+          results.push(`${protocol}://${decoded}`);
+        } catch (e) {
+          // Если декодирование не удалось, используем оригинальный rest
+          results.push(`${protocol}://${rest}`);
+        }
+      } else {
+        results.push(`${protocol}://${rest}`);
+      }
     }
-    await Promise.all(tasks);
-    log.push(`Done ${src}`);
   }
   return { results, log };
 }
