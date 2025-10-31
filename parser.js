@@ -15,6 +15,7 @@
  * - Added proper error handling for malformed URIs
  */
 const pLimit = require('p-limit');
+const fetch = require('node-fetch');
 const net = require('net');
 const tls = require('tls');
 const dgram = require('dgram');
