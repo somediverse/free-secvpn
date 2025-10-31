@@ -14,6 +14,7 @@
  * - normalizeLine всегда возвращает строку
  * - lower определён до фильтров
  */
+
 const fetch = require('node-fetch');
 const net = require('net');
 const tls = require('tls');
