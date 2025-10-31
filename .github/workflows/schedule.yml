@@ -1,10 +1,8 @@
 name: Scheduled VPN Parser
-
 permissions:
-  contents: read
+  contents: write  # Изменено с read на write
   pull-requests: write
   issues: write
-
 on:
   pull_request_target:
     types: [opened, synchronize]
@@ -13,14 +11,12 @@ on:
   schedule:
     - cron: '0 0,13 * * *'
   workflow_dispatch:
-
 jobs:
   run-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-
     steps:
       - name: Check required secrets
         run: |
@@ -28,30 +24,25 @@ jobs:
             echo "Error: LLM_API_KEY secret is not configured"
             exit 1
           fi
-
       - name: AI Reviewer
         uses: presubmit/ai-reviewer@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: "gpt-5-nano"
-
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
+          token: ${{ secrets.GITHUB_TOKEN }}  # Добавлено для доступа к репозиторию
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run parser
         run: node index.js
-
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
@@ -60,3 +51,4 @@ jobs:
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
           branch: "main"
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # Добавлено
