@@ -1,35 +1,66 @@
 name: Scheduled VPN Parser
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 on:
+  pull_request_target:
+    types: [opened, synchronize]
+  pull_request_review_comment:
+    types: [created]
   schedule:
     - cron: '0 0,13 * * *'
   workflow_dispatch:
+
 jobs:
   run-parser:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # ← Добавлено: таймаут для всего job (если пинг медленный)
-    strategy: 
-      fail-fast: false   # ← Добавлено: не останавливать на ошибке
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+
     steps:
-      - uses: hmarr/debug-action@v3
+      - name: Check required secrets
+        run: |
+          if [ -z "${{ secrets.LLM_API_KEY }}" ]; then
+            echo "Error: LLM_API_KEY secret is not configured"
+            exit 1
+          fi
+
+      - name: AI Reviewer
+        uses: presubmit/ai-reviewer@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: "gpt-5-nano"
+
+      - name: Debug Action
+        uses: hmarr/debug-action@v3
+
       - name: Checkout repository
-        uses: actions/checkout@v5       
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
       - name: Setup Node.js environment
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v3
         with:
           node-version: 24
+
       - name: Install dependencies
         run: npm ci
-      - run: npm install
+
       - name: Run parser
         run: |
-          set -e  # Остановка на ошибке
-          node index.js 2>&1 | tee parser.log  # ← Добавлено: сохранить stdout/stderr в файл + вывод
-        continue-on-error: true  # ← Добавлено: продолжить workflow, даже если краш
-        shell: bash  # ← Добавлено: bash для tee
+          set -e
+          node index.js 2>&1 | tee parser.log
+        continue-on-error: true
+        shell: bash
+
       - name: Debug logs if failed
-        if: failure()  # ← Добавлено: только если краш
+        if: failure()
         run: |
           echo "=== PARSER LOG ==="
           cat parser.log || echo "No parser.log"
@@ -40,15 +71,17 @@ jobs:
           echo "=== DIR CONTENTS ==="
           ls -la
         shell: bash
+
       - name: Upload a Build Artifact
-        uses: actions/upload-artifact@v5
-        if: always()  # Всегда, даже при успехе
+        uses: actions/upload-artifact@v3
+        if: always()
         with:
           name: parser-logs
           path: |
             parser.log
             results/last_run.log
           retention-days: 7
+
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
