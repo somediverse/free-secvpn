@@ -1,4 +1,4 @@
-name: Scheduled VPN Parser
+name: Fly VPN Parser
 
 on:
   schedule:
