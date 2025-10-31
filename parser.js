@@ -196,7 +196,7 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
       let rest = m[2];
 
       // Многострочный JSON
-      if ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}'))) {
+      if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
         let depth = 0, block = rest;
         for (const c of block) if (c === '{') depth++; else if (c === '}') depth--;
         while (depth > 0 && i < lines.length) {
