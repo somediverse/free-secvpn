@@ -86,8 +86,49 @@ function hasRequiredParam(lineLower, jsonObj) { const checkValue=(val)=>{ if(!va
 function portIs443(lineLower, jsonObj){ if(/:443\b/.test(lineLower)) return true; if(/port["']?\s*[:=]\s*["']?443\b/.test(lineLower)) return true; if(jsonObj && (String(jsonObj.port)==='443' || Number(jsonObj.port)===443)) return true; return false; }
 
 function securityForbidden(lineLower,jsonObj){ const re=/security\s*[=:\"]\s*([a-zA-Z0-9_-]+)/i; const m=lineLower.match(re); if(m){ const v=m[1].toLowerCase(); if(v==='none'||v==='auto') return true;} if(jsonObj && Object.prototype.hasOwnProperty.call(jsonObj,'security')){ const v=String(jsonObj.security).toLowerCase(); if(v==='none'||v==='auto'||v==='') return true;} return false; }
-
-function normalizeLine(protocol,payload,suffix,log){ const orig=`${protocol}://${payload}${suffix? ' '+suffix : ''}`; const dec=decodeBase64IfNeeded(payload); if(dec!==payload){ log.push(`Decoded base64 payload for ${protocol}://...`); const m2=dec.match(PROTOCOL_RE); if(m2) return normalizeLine(m2[1],m2[2],suffix,log); const j=safeJsonParse(dec); if(j) return flattenJsonToUrl(protocol,j,suffix); try{ const y=yaml.load(dec); if(y && typeof y==='object') return flattenJsonToUrl(protocol,y,suffix);}catch(e){} return `${protocol}://${dec}${suffix? ' '+suffix:''}`; } const pTrim=payload.trim(); if(pTrim.startsWith('{')||pTrim.startsWith('[')){ const j=safeJsonParse(pTrim); if(j && typeof j==='object') return flattenJsonToUrl(protocol,j,suffix); else { try{ const y=yaml.load(pTrim); if(y && typeof y==='object') return flattenJsonToUrl(protocol,y,suffix);}catch(e){} return orig; } } const idx=payload.indexOf('{'); if(idx>=0){ const jstr=payload.slice(idx); const j=safeJsonParse(jstr); if(j) return flattenJsonToUrl(protocol,j,suffix); } return orig; }
+function normalizeLine(protocol, payload, suffix, log) {
+  const orig = `${protocol}://${payload}${suffix ? ' ' + suffix : ''}`;
+  // Проверка payload на undefined или null
+  if (!payload) {
+    return orig;
+  }
+  const dec = decodeBase64IfNeeded(payload);
+  if (dec !== payload) {
+    log.push(`Decoded base64 payload for ${protocol}://...`);
+    const m2 = dec.match(PROTOCOL_RE);
+    if (m2) return normalizeLine(m2[1], m2[2], suffix, log);
+    const j = safeJsonParse(dec);
+    if (j) return flattenJsonToUrl(protocol, j, suffix);
+    try {
+      const y = yaml.load(dec);
+      if (y && typeof y === 'object') return flattenJsonToUrl(protocol, y, suffix);
+    } catch (e) {
+      // Пропускаем ошибки парсинга
+    }
+    return `${protocol}://${dec}${suffix ? ' ' + suffix : ''}`;
+  }
+  const pTrim = payload.trim();
+  if (pTrim.startsWith('{') || pTrim.startsWith('[')) {
+    const j = safeJsonParse(pTrim);
+    if (j && typeof j === 'object') return flattenJsonToUrl(protocol, j, suffix);
+    else {
+      try {
+        const y = yaml.load(pTrim);
+        if (y && typeof y === 'object') return flattenJsonToUrl(protocol, y, suffix);
+      } catch (e) {
+        // Пропускаем ошибки парсинга
+      }
+      return orig;
+    }
+  }
+  const idx = payload.indexOf('{');
+  if (idx >= 0) {
+    const jstr = payload.slice(idx);
+    const j = safeJsonParse(jstr);
+    if (j) return flattenJsonToUrl(protocol, j, suffix);
+  }
+  return orig;
+}
 
 async function fetchText(url){ const res=await fetch(url,{ timeout:30000}); if(!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`); return await res.text(); }
 
