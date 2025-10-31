@@ -1,13 +1,13 @@
 name: Scheduled VPN Parser
 on:
   schedule:
-    - cron: '0 0,12 * * *'
+    - cron: '0 0,13 * * *'
   workflow_dispatch:
 jobs:
   run-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # ← Добавлено: таймаут для всего job (если пинг медленный)
-    strategy
+    strategy: 
       fail-fast: false   # ← Добавлено: не останавливать на ошибке
     steps:
       - uses: hmarr/debug-action@v3
