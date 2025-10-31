@@ -117,6 +117,10 @@ function parseHostPortFromNormalized(normalized) {
 }
 
 function extractCommentSuffix(raw) {
+  if (!raw) {
+    console.log('Warning: extractCommentSuffix called with undefined/null input');
+    return '';
+  }
   const i1 = raw.indexOf(' # ');
   if (i1 >= 0) return raw.slice(i1);
   const i2 = raw.lastIndexOf('#');
