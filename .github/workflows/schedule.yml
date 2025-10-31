@@ -1,5 +1,4 @@
 name: Fly VPN Parser
-
 on:
   schedule:
     - cron: '* * 12 * * *'
