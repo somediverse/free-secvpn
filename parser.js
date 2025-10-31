@@ -9,7 +9,6 @@
  * improves detection for many UDP-capable VPN servers but cannot guarantee 100% for all QUIC servers.
  * upd. Parser module with concurrency, TCP reachability, TLS handshake and UDP probe.
  */
-
 const fetch = require('node-fetch');
 const net = require('net');
 const tls = require('tls');
