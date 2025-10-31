@@ -14,6 +14,22 @@
  * - Updated to handle vmess JSON format
  * - Added proper error handling for malformed URIs
  */
+
+ * Parser module with concurrency, TCP reachability, TLS handshake and UDP probe (QUIC-ish) checks.
+ * - Uses a concurrency limit (default 50) to run connection probes in parallel.
+ * - Performs TCP connect to host:port.
+ * - Performs a TLS handshake (tls.connect) when port reachable to verify TLS server is responding.
+ * - Performs a UDP probe: send an empty packet and wait for any response (best-effort for UDP/QUIC).
+ *
+ * NOTE: UDP/QUIC detection is best-effort — QUIC may not respond to an empty UDP packet. This step
+ * improves detection for many UDP-capable VPN servers but cannot guarantee 100% for all QUIC servers.
+ * upd. Parser module with concurrency, TCP reachability, TLS handshake and UDP
+ * updated:
+ * - Гарантировано нет undefined.includes
+ * - checkInsecureFlag
+ * - Updated to handle vmess JSON format
+ * - Added proper error handling for malformed URIs
+ */
 const pLimit = require('p-limit');
 const fetch = require('node-fetch');
 const net = require('net');
@@ -285,7 +301,6 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
       }
     }
   }
-  
   return { results, log };
 }
 module.exports = { parseSources };
