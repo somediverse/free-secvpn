@@ -45,8 +45,8 @@ jobs:
           ls -la
         shell: bash
 
-      - name: Upload logs as artifact  # ← Добавлено: скачать лог из Actions UI
-        uses: actions/upload-artifact@v4
+- name: Upload a Build Artifact
+  uses: actions/upload-artifact@v5.0.00
         if: always()  # Всегда, даже при успехе
         with:
           name: parser-logs
