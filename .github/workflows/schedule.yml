@@ -1,4 +1,4 @@
-name: VPN Auto‑Parser
+name: Scheduled VPN Parser
 
 on:
   schedule:
