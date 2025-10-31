@@ -14,7 +14,6 @@
  * - normalizeLine всегда возвращает строку
  * - lower определён до фильтров
  */
-
 const fetch = require('node-fetch');
 const net = require('net');
 const tls = require('tls');
@@ -23,7 +22,6 @@ const pLimit = require('p-limit');
 
 const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/.*$/s;
 
-// === УТИЛИТЫ ===
 function safeJsonParse(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
@@ -61,7 +59,6 @@ function flattenJsonToUrl(protocol, obj, suffix) {
   return `${protocol}://${authority}${query}${comment}`.trim();
 }
 
-// === БЕЗОПАСНЫЕ ФИЛЬТРЫ ===
 function checkInsecureFlags(inputLine, jsonObj) {
   const lineLower = typeof inputLine === 'string' ? inputLine.toLowerCase() : '';
   if (!lineLower) return false;
@@ -86,7 +83,7 @@ function securityForbidden(inputLine, jsonObj) {
   if (!lineLower) return false;
 
   const m = lineLower.match(/(security|scy|sc)\s*[=:]?\s*([^\s;,&}]+)/i);
-  if (m && m[2] && ['none', 'auto'].includes(m[2].toLowerCase())) return true;  // ← ДОБАВЛЕНО m[2]
+  if (m && m[2] && ['none', 'auto'].includes(m[2].toLowerCase())) return true;
 
   return jsonObj?.security && ['none', 'auto'].includes(String(jsonObj.security).toLowerCase());
 }
@@ -97,7 +94,7 @@ function hasRequiredParam(inputLine, jsonObj) {
 
   const ok = v => v && (/tls|reality/.test(v) || /-(gcm|poly1305)$/.test(v));
   const m = lineLower.match(/(security|method|cipher|scy|sc|crypt)\s*[=:\"]?\s*([^\s;,&}]+)/i);
-  if (m && ok(m[2])) return true;
+  if (m && m[2] && ok(m[2])) return true;
 
   return ['security', 'scy', 'method', 'cipher'].some(k => jsonObj?.[k] && ok(String(jsonObj[k]).toLowerCase()));
 }
@@ -128,15 +125,16 @@ function extractCommentSuffix(raw) {
 
 // === НОРМАЛИЗАЦИЯ (всегда строка) ===
 function normalizeLine(protocol, payload, suffix) {
-  const decoded = decodeBase64IfNeeded(payload) || payload;
+  const decoded = decodeBase64IfNeeded(payload) || payload || '';
   let result = `${protocol}://${decoded}${suffix || ''}`.trim();
 
-  if (decoded.trim().match(/^\{[\s\S]*\}$/)) {
-    const jsonObj = safeJsonParse(decoded.trim());
+  const trimmedDecoded = decoded.trim();
+  if (trimmedDecoded.match(/^\{[\s\S]*\}$/)) {
+    const jsonObj = safeJsonParse(trimmedDecoded);
     if (jsonObj) result = flattenJsonToUrl(protocol, jsonObj, suffix);
   }
 
-  return result;
+  return result || '';
 }
 
 // === ПРОБНИКИ ===
@@ -224,7 +222,7 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
         try { jsonObj = JSON.parse(normalized.slice(jsonStart)); } catch {}
       }
 
-      // ФИЛЬТРЫ — БЕЗОПАСНО
+      // ФИЛЬТРЫ
       if (checkInsecureFlags(normalized, jsonObj)) { log.push(`Excluded (insecure) -> ${normalized}`); continue; }
       if (securityForbidden(normalized, jsonObj)) { log.push(`Excluded (none/auto) -> ${normalized}`); continue; }
       if (!hasRequiredParam(normalized, jsonObj)) { log.push(`Excluded (no crypto) -> ${normalized}`); continue; }
