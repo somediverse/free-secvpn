@@ -1,8 +1,6 @@
 name: Scheduled VPN Parser
 permissions:
-  contents: write  # Важно для коммита
-  pull-requests: write
-  issues: write
+  contents: write
 on:
   schedule:
     - cron: '0 0,13 * * *'
@@ -11,8 +9,6 @@ jobs:
   run-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,9 +25,4 @@ jobs:
         with:
           commit_message: "chore(parser): update filtered_list.txt from scheduled run"
           file_pattern: "results/*"
-          commit_user_name: "github-actions[bot]"
-          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
-          branch: "main"
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          skip_fetch: true
-          skip_checkout: true
