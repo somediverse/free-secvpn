@@ -2,26 +2,59 @@ name: Scheduled VPN Parser
 
 on:
   schedule:
-    # every 12 hours: at 00:00 and 12:00 UTC
     - cron: '0 0,12 * * *'
   workflow_dispatch:
 
 jobs:
   run-parser:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # ← Добавлено: таймаут для всего job (если пинг медленный)
+    strategy:
+      fail-fast: false   # ← Добавлено: не останавливать на ошибке
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+
       - name: Install dependencies
         run: npm ci
+
       - name: Run parser
-        run: node index.js
+        run: |
+          set -e  # Остановка на ошибке
+          node index.js 2>&1 | tee parser.log  # ← Добавлено: сохранить stdout/stderr в файл + вывод
+        continue-on-error: true  # ← Добавлено: продолжить workflow, даже если краш
+        shell: bash  # ← Добавлено: bash для tee
+
+      - name: Debug logs if failed
+        if: failure()  # ← Добавлено: только если краш
+        run: |
+          echo "=== PARSER LOG ==="
+          cat parser.log || echo "No parser.log"
+          echo "=== NODE VERSION ==="
+          node --version
+          echo "=== NPM LIST ==="
+          npm ls
+          echo "=== DIR CONTENTS ==="
+          ls -la
+        shell: bash
+
+      - name: Upload logs as artifact  # ← Добавлено: скачать лог из Actions UI
+        uses: actions/upload-artifact@v4
+        if: always()  # Всегда, даже при успехе
+        with:
+          name: parser-logs
+          path: |
+            parser.log
+            results/last_run.log
+          retention-days: 7
+
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
