@@ -3,7 +3,7 @@
  * Reads sources.json (list of URLs), runs parser, writes results to results/filtered_list.txt
  * Logs progress to console.
  */
-const fs = require('fs').promises; // Изменено для асинхронных операций
+const fs = require('fs');
 const path = require('path');
 const { parseSources } = require('./parser');
 async function main() {
@@ -22,26 +22,16 @@ async function main() {
     const { results, log } = await parseSources(sources);
     console.log(`Parser completed: ${results.length} results, ${log.length} log entries`);
     
-    // ensure results folder
     const outDir = path.join(__dirname, 'results');
     if (!fs.existsSync(outDir)) {
-      await fs.mkdir(outDir);
-      console.log('Created results directory');
+      fs.mkdirSync(outDir, { recursive: true });
     }
     
-    // write filtered results asynchronously
     console.log('Writing filtered_list.txt...');
-    const filteredPath = path.join(outDir, 'filtered_list.txt');
-    await fs.writeFile(filteredPath, results.join('\n') + '\n');
-    console.log(`Written ${results.length} entries to ${filteredPath}`);
-    
-    // write log asynchronously
+    fs.writeFileSync(path.join(outDir, 'filtered_list.txt'), results.join('\n') + '\n');
     console.log('Writing last_run.log...');
-    const logPath = path.join(outDir, 'last_run.log');
-    await fs.writeFile(logPath, log.join('\n') + '\n');
-    console.log(`Written ${log.length} log entries to ${logPath}`);
-    
-    console.log(new Date().toISOString(), 'Done. All operations completed successfully');
+    fs.writeFileSync(path.join(outDir, 'last_run.log'), log.join('\n') + '\n');
+    console.log('Files written successfully');
     
   } catch (error) {
     console.error('Error in main:', error);
