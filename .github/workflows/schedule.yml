@@ -1,10 +1,8 @@
 name: Scheduled VPN Parser
-
 on:
   schedule:
     - cron: '0 0,12 * * *'
   workflow_dispatch:
-
 jobs:
   run-parser:
     runs-on: ubuntu-latest
@@ -14,20 +12,13 @@ jobs:
     steps:
       - uses: hmarr/debug-action@v3
       - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Download 24hrs Old Logs
-        uses: pawanbahuguna/action-logs/@v2.0.0
-        env: 
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GH_REPO: ${{ github.repository }}        
+        uses: actions/checkout@v5       
         with:
           fetch-depth: 0
-
       - name: Setup Node.js environment
         uses: actions/setup-node@v6
         with:
           node-version: 24
-
       - name: Install dependencies
         run: npm ci
       - run: npm test
@@ -37,7 +28,6 @@ jobs:
           node index.js 2>&1 | tee parser.log  # ← Добавлено: сохранить stdout/stderr в файл + вывод
         continue-on-error: true  # ← Добавлено: продолжить workflow, даже если краш
         shell: bash  # ← Добавлено: bash для tee
-
       - name: Debug logs if failed
         if: failure()  # ← Добавлено: только если краш
         run: |
@@ -59,7 +49,6 @@ jobs:
             parser.log
             results/last_run.log
           retention-days: 7
-
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
