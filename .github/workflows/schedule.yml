@@ -1,27 +1,22 @@
 name: Fly VPN Parser
 on:
   schedule:
-    - cron: '* * 12 * * *'
-  workflow_dispatch:   # ручной запуск
-
+    - cron: '0 */12 * * *'
+  workflow_dispatch:  # ручной запуск
 jobs:
   parse:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-      - uses: actions/checkout@v5
-
+        uses: actions/checkout@v5
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: '22.21.1'
-
       - name: Install deps
         run: npm ci && npm install
-
       - name: Run parser
         run: node index.js
-
       - name: Commit result
         run: |
           git config user.name "github-actions[bot]"
