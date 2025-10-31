@@ -1,13 +1,9 @@
 name: Scheduled VPN Parser
 permissions:
-  contents: write  # Изменено с read на write
+  contents: write  # Важно для коммита
   pull-requests: write
   issues: write
 on:
-  pull_request_target:
-    types: [opened, synchronize]
-  pull_request_review_comment:
-    types: [created]
   schedule:
     - cron: '0 0,13 * * *'
   workflow_dispatch:
@@ -18,31 +14,16 @@ jobs:
     strategy:
       fail-fast: false
     steps:
-      - name: Check required secrets
-        run: |
-          if [ -z "${{ secrets.LLM_API_KEY }}" ]; then
-            echo "Error: LLM_API_KEY secret is not configured"
-            exit 1
-          fi
-      - name: AI Reviewer
-        uses: presubmit/ai-reviewer@latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_MODEL: "gpt-5-nano"
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}  # Добавлено для доступа к репозиторию
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: '20'
       - name: Install dependencies
         run: npm ci
       - name: Run parser
-        run: node index.js        
+        run: node index.js
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
