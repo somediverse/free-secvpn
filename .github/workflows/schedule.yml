@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run parser
-        run: node index.js
+        run: node index.js        
       - name: Commit results if changed
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
@@ -51,4 +51,6 @@ jobs:
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
           branch: "main"
-          github_token: ${{ secrets.GITHUB_TOKEN }}  # Добавлено
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          skip_fetch: true
+          skip_checkout: true
