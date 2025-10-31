@@ -86,7 +86,7 @@ function securityForbidden(inputLine, jsonObj) {
   if (!lineLower) return false;
 
   const m = lineLower.match(/(security|scy|sc)\s*[=:]?\s*([^\s;,&}]+)/i);
-  if (m && ['none', 'auto'].includes(m[2].toLowerCase())) return true;
+  if (m && m[2] && ['none', 'auto'].includes(m[2].toLowerCase())) return true;  // ← ДОБАВЛЕНО m[2]
 
   return jsonObj?.security && ['none', 'auto'].includes(String(jsonObj.security).toLowerCase());
 }
