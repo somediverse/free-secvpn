@@ -19,6 +19,9 @@ const net = require('net');
 const tls = require('tls');
 const dgram = require('dgram');
 const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/(.*)$/s;
+function isIPAddress(host) {
+  return /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/.test(host);
+}
 function extractCommentSuffix(raw) {
   if (!raw) return '';
   const i1 = raw.indexOf(' # ');
@@ -73,7 +76,11 @@ async function checkTcpConnection(host, port, timeout = 5000) {
 }
 async function checkTlsConnection(host, port, timeout = 5000) {
   return new Promise((resolve) => {
-    const socket = tls.connect({ host, port, servername: host, timeout }, () => {
+    const options = { host, port, timeout };
+    if (!isIPAddress(host)) {
+      options.servername = host;
+    }
+    const socket = tls.connect(options, () => {
       socket.end();
       resolve(true);
     });
