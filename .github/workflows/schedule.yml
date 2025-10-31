@@ -50,9 +50,8 @@ jobs:
           echo "=== DIR CONTENTS ==="
           ls -la
         shell: bash
-
-- name: Upload a Build Artifact
-  uses: actions/upload-artifact@v5
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v5
         if: always()  # Всегда, даже при успехе
         with:
           name: parser-logs
