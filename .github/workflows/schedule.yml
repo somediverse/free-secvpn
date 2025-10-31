@@ -1,0 +1,37 @@
+name: Scheduled VPN Parser
+on:
+  schedule:
+    # every 12 hours: at 00:00 and 12:00 UTC
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:
+jobs:
+  run-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Change working directory
+        run: cd free-secvpn/wtf/
+      - name: Install dependencies
+        run: npm install
+        working-directory: free-secvpn/wtf/
+      - name: Clean install
+        run: npm ci
+        working-directory: free-secvpn/wtf/
+      - name: Run parser
+        run: node index.js
+        working-directory: free-secvpn/wtf/
+      - name: Commit results if changed
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore(parser): update filtered_list.txt from scheduled run"
+          file_pattern: "free-secvpn/wtf/results/*"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+          branch: "main"
