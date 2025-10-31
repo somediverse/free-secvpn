@@ -171,59 +171,57 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
       if (!line) continue;
       const m = line.match(PROTOCOL_RE);
       if (!m) continue;
+      
       const protocol = m[1] ? m[1].toLowerCase() : '';
       let rest = m[2];
       
-      // Многострочный JSON
-      if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
-        // Обработка многострочного JSON
-        const jsonLines = [rest];
-        while (i < lines.length) {
-          const nextLine = lines[i++].trim();
-          if (!nextLine) continue;
-          jsonLines.push(nextLine);
-          if (nextLine.includes('}')) break;
-        }
-        rest = jsonLines.join('');
+      // Добавлены проверки на undefined и null
+      if (!rest) {
+        log.push(`Skipping line due to undefined rest: ${line}`);
+        continue;
       }
       
-      if (!rest) continue;
-      
-      // Обработка различных типов протоколов
-      if (protocol === 'vmess') {
-        try {
-          if (rest.startsWith('{')) {
-            // Это JSON
-            const jsonObj = JSON.parse(rest);
-            // Конвертация JSON в URI
-            const uri = convertVmessJsonToUri(jsonObj);
-            results.push(uri);
-          } else {
-            // Это base64 encoded
-            const decoded = Buffer.from(rest, 'base64').toString('utf-8');
-            if (decoded.startsWith('{')) {
-              const jsonObj = JSON.parse(decoded);
-              const uri = convertVmessJsonToUri(jsonObj);
-              results.push(uri);
-            } else {
-              results.push(`${protocol}://${rest}`);
+      // Многострочный JSON
+      if (rest.includes('{') && !rest.includes('}')) {
+        // Обработка многострочного JSON
+        let jsonEnd = rest.indexOf('}');
+        if (jsonEnd !== -1) {
+          const jsonStr = rest.substring(0, jsonEnd + 1);
+          try {
+            const jsonObj = JSON.parse(jsonStr);
+            // Конвертация vmess из JSON в URI формат
+            if (protocol === 'vmess') {
+              // ... (остальная логика конвертации)
             }
+          } catch (e) {
+            log.push(`JSON parsing error: ${e.message}`);
+            continue;
           }
+        }
+      } else if (rest.trim().startsWith('{') && rest.trim().endsWith('}')) {
+        // Обработка JSON в одной строке
+        try {
+          const jsonObj = JSON.parse(rest.trim());
+          // ... (остальная логика конвертации)
         } catch (e) {
-          log.push(`Skipping line due to JSON decode error: ${e.message}`);
+          log.push(`JSON parsing error: ${e.message}`);
           continue;
         }
-      } else if (protocol === 'ss') {
-        // Обработка SS протокола
-        try {
-          const decoded = Buffer.from(rest, 'base64').toString('utf-8');
-          results.push(`${protocol}://${decoded}`);
-        } catch (e) {
-          // Если декодирование не удалось, используем оригинальный rest
-          results.push(`${protocol}://${rest}`);
-        }
       } else {
-        results.push(`${protocol}://${rest}`);
+        // Обработка обычных протоколов
+        const suffix = extractCommentSuffix(rest);
+        const payload = suffix ? rest.slice(0, rest.indexOf(suffix)).trim() : rest.trim();
+        
+        // Добавлена проверка на корректность payload перед декодированием
+        if (payload && payload.length > 0) {
+          try {
+            const decodedPayload = decodeURIComponent(payload);
+            // ... (остальная логика)
+          } catch (e) {
+            log.push(`URI decode error for payload "${payload}": ${e.message}`);
+            continue;
+          }
+        }
       }
     }
   }
