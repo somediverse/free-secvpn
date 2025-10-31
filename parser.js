@@ -19,7 +19,7 @@ const net = require('net');
 const tls = require('tls');
 const dgram = require('dgram');
 const pLimit = require('p-limit');
-const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/.*$/s;
+const PROTOCOL_RE = /^([a-zA-Z0-9+\-.]+):\/\/(.*)$/s;
 function safeJsonParse(s) {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
@@ -170,12 +170,24 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
       line = line.trim();
       if (!line) continue;
       const m = line.match(PROTOCOL_RE);
-      if (!m) continue;
+      if (!m || m.length < 3) {
+        log.push(`Skipping line due to regex match failure: ${line}`);
+        continue;
+      }
       const protocol = m[1] ? m[1].toLowerCase() : '';
       let rest = m[2];
       
       // Проверка на undefined для protocol
-      if (!protocol) continue;
+      if (!protocol) {
+        log.push(`Skipping line due to undefined protocol: ${line}`);
+        continue;
+      }
+      
+      // Проверка на undefined для rest
+      if (!rest) {
+        log.push(`Skipping line due to undefined rest: ${line}`);
+        continue;
+      }
       
       // Многострочный JSON
       if (rest && ((rest.includes('{') && !rest.includes('}')) || (rest.trim().startsWith('{') && !rest.trim().endsWith('}')))) {
@@ -188,12 +200,6 @@ async function parseSources(sources, { concurrency = 50 } = {}) {
           for (const c of next) if (c === '{') depth++; else if (c === '}') depth--;
         }
         rest = block;
-      }
-      
-      // Проверка на undefined для rest
-      if (!rest) {
-        log.push(`Skipping line due to undefined rest: ${line}`);
-        continue;
       }
       
       const suffix = extractCommentSuffix(rest);
