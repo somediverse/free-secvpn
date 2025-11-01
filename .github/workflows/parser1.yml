@@ -1,0 +1,26 @@
+name: Fly VPN Parser
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:  # ручной запуск
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.21.1'
+      - name: Install deps
+        run: npm ci && npm install
+      - name: Run parser
+        run: node index.js
+      - name: Commit result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vpn_filtered.txt debug.log
+          git commit -m "Auto-update $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes"
+          git push

@@ -6,12 +6,12 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "node-fetch": "^2.6.7",
+    "node-fetch": "^3.3.2",
     "js-yaml": "^4.1.0",
-    "simple-git": "^3.19.0",
-    "p-limit": "^3.1.0"
+    "simple-git": "^3.29.0",
+    "p-limit": "^7.2.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=v22.21.1"
   }
 }
